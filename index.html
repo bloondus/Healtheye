@@ -121,6 +121,20 @@ input{flex:1;min-width:180px}
 @media(prefers-reduced-motion:reduce){#ticker .track,.dot{animation:none}}
 .err{color:var(--mut);padding:14px 16px;font-size:12px}
 footer{color:var(--mut);font-size:11px;text-align:center;padding:18px 0 8px}
+/* --- Profi-Features --- */
+.threat{display:flex;align-items:center;gap:10px;font-family:ui-monospace,monospace;font-size:12px;letter-spacing:1px}
+.threat .lamp{width:14px;height:14px;border-radius:50%;box-shadow:0 0 10px currentColor}
+.threat.gruen{color:var(--info)} .threat.gelb{color:var(--med)} .threat.rot{color:var(--crit)}
+.threat .lbl2{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:1px}
+.newdelta{font-family:ui-monospace,monospace;font-size:11px;color:var(--acc);margin-top:2px}
+.kev .relevant{color:#fff;background:var(--crit);border-radius:6px;padding:1px 6px;font-weight:700;font-size:10px}
+.kev .due-soon{color:var(--med);font-weight:700}
+.kev .due-over{color:var(--crit);font-weight:700}
+.card.gelesen{opacity:.42;filter:saturate(.5)}
+.card.gelesen:hover{opacity:.75}
+.card .gelesenBtn{cursor:pointer;font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.card .gelesenBtn:hover{color:var(--acc);border-color:var(--acc)}
+.badge.neu{color:#fff;background:var(--acc);border-color:var(--acc)}
 </style>
 </head>
 <body>
@@ -131,10 +145,18 @@ footer{color:var(--mut);font-size:11px;text-align:center;padding:18px 0 8px}
     <div class="sub">IT-Security News Dashboard</div>
   </div>
   <div class="live"><span class="dot"></span>LIVE</div>
+  <div class="threat gruen" id="threat" title="Aggregierter Bedrohungslevel: überfällige KEVs + kritische Healthcare-News (24h) + Feed-Health">
+    <span class="lamp" style="background:currentColor"></span>
+    <div>
+      <div id="threatLvl">–</div>
+      <div class="lbl2" id="threatWhy">Bedrohungslevel</div>
+    </div>
+  </div>
   <div class="clock">
     <div class="time" id="clock">--:--:--</div>
     <div class="date" id="date">–</div>
     <div class="date" id="refreshInfo">–</div>
+    <div class="newdelta" id="newdelta"></div>
   </div>
 </header>
 
@@ -148,7 +170,7 @@ footer{color:var(--mut);font-size:11px;text-align:center;padding:18px 0 8px}
   </div>
 
   <div class="panel">
-    <h2>⚠ CISA KEV — Aktiv ausgenützte Schwachstellen (neueste)</h2>
+    <h2>⚠ CISA KEV — Aktiv ausgenützte Schwachstellen (nach Frist, 🎯 = betrifft unsere Systeme)</h2>
     <div class="kev-grid" id="kev"><div class="err">Lade KEV-Daten …</div></div>
   </div>
 
@@ -228,6 +250,19 @@ const PROXIES = [
   u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
 ];
 const CACHE_KEY = 'healtheye:v2';
+
+/* ===== Profi-Config: EURE Systeme (für „🎯 betrifft uns"-Badge in KEV) =====
+   Kleinschreibung, Teilstring-Match auf vendor+product+vulnerabilityName. */
+const ASSETS = ['windows','vmware','fortinet','fortios','cisco','paloalto','palo alto',
+  'philips','siemens','dräger','draeger','ge healthcare','medtronic','fresenius',
+  'exchange','sharepoint','citrix','veeam','sonicwall','ivanti','pulse','f5','active directory'];
+
+// Gelesen-Markierungen & letzter Besuch (nur lokal im Browser, kein Server)
+const READ_KEY = 'healtheye:read:v1';
+const SEEN_KEY = 'healtheye:lastvisit:v1';
+const readSet = new Set(JSON.parse(localStorage.getItem(READ_KEY) || '[]'));
+const lastVisit = parseInt(localStorage.getItem(SEEN_KEY) || '0', 10);
+function saveRead(){ localStorage.setItem(READ_KEY, JSON.stringify([...readSet].slice(-500))); }
 /* ================================================== */
 
 const $ = s => document.querySelector(s);
@@ -236,6 +271,44 @@ const esc = s => String(s||'').replace(/[&<>"']/g, c =>
 
 let state = { filter:'alle', src:'', q:'' };
 let items = [], kev = [], feedStatus = [];
+
+/* ---------- Bedrohungslevel (Ampel) ---------- */
+function threatLevel(){
+  const now = Date.now();
+  const day = 86400000;
+  // 1) überfällige KEVs (dueDate < heute) und in <48h fällige
+  let overdue = 0, soon = 0;
+  (kev||[]).forEach(v => {
+    const d = new Date(v.dueDate).getTime();
+    if(!isNaN(d)){ if(d < now) overdue++; else if(d - now < 2*day) soon++; }
+  });
+  // 2) kritische Healthcare-News der letzten 24h
+  const critHealth24 = items.filter(i => i.health && ['kritisch','hoch'].includes(i.level)
+    && (now - new Date(i.date).getTime()) < day).length;
+  // 3) Feed-Health
+  const feedsDown = feedStatus.filter(f => !f.ok).length;
+  const total = FEEDS.length;
+
+  if(overdue > 0 || critHealth24 >= 3)
+    return { cls:'rot', txt:'ROT', why:`${overdue} KEV überfällig · ${critHealth24} kritische Healthcare-News (24h)` };
+  if(soon > 0 || critHealth24 >= 1 || feedsDown >= Math.ceil(total/2))
+    return { cls:'gelb', txt:'GELB', why:`${soon} KEV <48h · ${critHealth24} krit. Healthcare (24h) · ${feedsDown}/${total} Quellen down` };
+  return { cls:'gruen', txt:'GRÜN', why:'keine überfälligen KEVs · Lage ruhig' };
+}
+
+/* ---------- KEV: Relevanz & Frist ---------- */
+function kevRelevant(v){
+  const t = (v.vendorProject+' '+v.product+' '+v.vulnerabilityName).toLowerCase();
+  return ASSETS.some(a => t.includes(a));
+}
+function kevDueInfo(v){
+  const now = Date.now(), d = new Date(v.dueDate).getTime();
+  if(isNaN(d)) return { cls:'', txt:'Frist: '+esc(v.dueDate) };
+  const days = Math.ceil((d - now)/86400000);
+  if(days < 0)  return { cls:'due-over',  txt:'⚠ Frist ÜBERFÄLLIG ('+Math.abs(days)+'T)' };
+  if(days <= 2) return { cls:'due-soon',  txt:'⏰ Frist in '+days+'T' };
+  return { cls:'', txt:'Frist: '+esc(v.dueDate) };
+}
 
 /* ---------- Uhr ---------- */
 function tickClock(){
@@ -360,22 +433,26 @@ function render(){
   $('#stKev').textContent = kev ? kev.length : '–';
   $('#stFeeds').textContent = feedStatus.filter(f=>f.ok).length + '/' + FEEDS.length;
 
-  // KEV
+  // KEV — sortiert nach Frist (dringlichste zuerst), mit Relevanz-Badge
   $('#kev').innerHTML = kev === null
     ? '<div class="err">KEV nicht erreichbar → <a style="color:var(--acc)" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">Direktlink</a></div>'
-    : kev.map(v => `<div class="kev">
+    : [...kev].sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate)).map(v => {
+      const rel = kevRelevant(v), due = kevDueInfo(v);
+      return `<div class="kev">
         <a href="https://nvd.nist.gov/vuln/detail/${esc(v.cveID)}" target="_blank" rel="noopener">${esc(v.cveID)}</a>
+        ${rel ? '<span class="relevant">🎯 BETRIFFT UNS</span>' : ''}
         ${v.knownRansomwareCampaignUse==='Known' ? '<span class="rw"> · 🔥 RANSOMWARE</span>' : ''}
         <div>${esc(v.vulnerabilityName)}</div>
-        <div class="meta">${esc(v.vendorProject)} / ${esc(v.product)} · hinzugefügt: ${esc(v.dateAdded)} · Frist: ${esc(v.dueDate)}</div>
-      </div>`).join('');
+        <div class="meta">${esc(v.vendorProject)} / ${esc(v.product)} · hinzugefügt: ${esc(v.dateAdded)} · <span class="${due.cls}">${due.txt}</span></div>
+      </div>`;
+    }).join('');
 
   // Quellen-Dropdown
   const sel = $('#srcSel');
   if(sel.options.length <= 1)
     FEEDS.forEach(f => { const o=document.createElement('option'); o.value=f.name; o.textContent=f.name; sel.appendChild(o); });
 
-  // News-Grid
+  // News-Grid — Smart-Sort: ungelesene Healthcare+kritisch zuerst, dann Datum
   const q = state.q.toLowerCase();
   const list = items.filter(i =>
     (state.filter==='alle'
@@ -384,19 +461,59 @@ function render(){
     && (!state.src || i.source===state.src)
     && (!q || (i.title+' '+i.desc).toLowerCase().includes(q))
   );
+  const rank = i => {
+    let r = 0;
+    if(i.health && ['kritisch','hoch'].includes(i.level)) r = 0;   // 🔥 zuerst
+    else if(['kritisch','hoch'].includes(i.level))        r = 1;
+    else if(i.health)                                     r = 2;
+    else                                                  r = 3;
+    if(readSet.has(i.link)) r += 10;                              // gelesene nach hinten
+    return r;
+  };
+  list.sort((a,b) => rank(a) - rank(b) || new Date(b.date) - new Date(a.date));
 
-  $('#grid').innerHTML = list.length ? list.map(i => `
-    <article class="card ${i.level}">
+  $('#grid').innerHTML = list.length ? list.map(i => {
+    const isNew = lastVisit && new Date(i.date).getTime() > lastVisit;
+    const gelesen = readSet.has(i.link);
+    return `
+    <article class="card ${i.level} ${gelesen?'gelesen':''}">
       <div class="badges">
         <span class="badge ${i.level}">${i.level}</span>
         ${i.health ? '<span class="badge health">🏥 Healthcare</span>' : ''}
+        ${isNew ? '<span class="badge neu">NEU</span>' : ''}
         <span class="badge">${esc(i.source)}</span>
       </div>
       <h3><a href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.title)}</a></h3>
       <p>${esc(i.desc)}</p>
-      <div class="foot"><span class="src">${esc(i.source)}</span><span>${ago(i.date)}</span></div>
-    </article>`).join('')
+      <div class="foot">
+        <span class="src">${esc(i.source)}</span>
+        <span>${ago(i.date)} <span class="gelesenBtn" data-link="${esc(i.link)}">${gelesen?'↩ ungelesen':'✓ gelesen'}</span></span>
+      </div>
+    </article>`;
+  }).join('')
     : '<div class="err">Keine Meldungen für diesen Filter.</div>';
+
+  // Gelesen-Buttons
+  document.querySelectorAll('.gelesenBtn').forEach(b => b.onclick = () => {
+    const l = b.dataset.link;
+    readSet.has(l) ? readSet.delete(l) : readSet.add(l);
+    saveRead(); render();
+  });
+
+  // Ampel + Delta
+  const t = threatLevel();
+  const th = $('#threat');
+  th.className = 'threat ' + t.cls;
+  $('#threatLvl').textContent = '● ' + t.txt;
+  $('#threatWhy').textContent = t.why;
+  if(lastVisit){
+    const neu = items.filter(i => new Date(i.date).getTime() > lastVisit);
+    const neuKrit = neu.filter(i => ['kritisch','hoch'].includes(i.level)).length;
+    const neuHealth = neu.filter(i => i.health).length;
+    $('#newdelta').textContent = neu.length
+      ? `+${neu.length} neu seit letztem Besuch${neuKrit?` · ${neuKrit} kritisch`:''}${neuHealth?` · ${neuHealth} 🏥`:''}`
+      : 'nichts Neues seit letztem Besuch';
+  }
 
   // Feed-Status
   $('#feedstatus').innerHTML = feedStatus.map(f =>
@@ -421,6 +538,7 @@ try{
   if(c && c.items){ items=c.items; kev=c.kev; feedStatus=c.feedStatus; render(); }
 }catch(e){}
 loadAll();
+localStorage.setItem(SEEN_KEY, String(Date.now()));
 setInterval(loadAll, REFRESH_MIN * 60 * 1000);
 </script>
 </body>
