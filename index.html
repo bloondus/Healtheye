@@ -25,6 +25,11 @@
     · HEALTH/CRIT  → Keyword-Listen (z. B. Hersteller: siemens, philips, draeger)
     · REFRESH_MIN  → Aktualisierungsintervall in Minuten
 
+  EIGENE SYSTEME („🎯 betrifft uns"-Badge)
+    Stehen NICHT im Repo (Datenschutz!). Lokale Datei anlegen:
+    cp assets.local.example.js assets.local.js  →  Liste dort anpassen.
+    assets.local.js ist in .gitignore → wird nie committed.
+
   HINWEIS CORS-PROXIES
     Browser blockieren direkte RSS-Abrufe von Fremddomains. Das Board nutzt
     öffentliche CORS-Proxies mit Fallback (siehe PROXIES). Es fliessen KEINE
@@ -207,6 +212,8 @@ footer{color:var(--mut);font-size:11px;text-align:center;padding:18px 0 8px}
 
 <div id="ticker"><span class="lbl">SECURITY NEWS</span><span class="track" id="track">Lade Feeds …</span></div>
 
+<!-- Lokale, NICHT committete System-Liste (siehe assets.local.example.js) -->
+<script src="assets.local.js" onerror="window.HEALTHEYE_ASSETS=[]"></script>
 <script>
 /* ================= KONFIGURATION ================= */
 const REFRESH_MIN = 10;
@@ -252,10 +259,12 @@ const PROXIES = [
 const CACHE_KEY = 'healtheye:v2';
 
 /* ===== Profi-Config: EURE Systeme (für „🎯 betrifft uns"-Badge in KEV) =====
-   Kleinschreibung, Teilstring-Match auf vendor+product+vulnerabilityName. */
-const ASSETS = ['windows','vmware','fortinet','fortios','cisco','paloalto','palo alto',
-  'philips','siemens','dräger','draeger','ge healthcare','medtronic','fresenius',
-  'exchange','sharepoint','citrix','veeam','sonicwall','ivanti','pulse','f5','active directory'];
+   Die Liste liegt NICHT im öffentlichen Repo — sie steht in der lokalen Datei
+   assets.local.js (in .gitignore, wird nie committed). Dort definiert ihr:
+     const ASSETS = ['windows','vmware','fortinet', ...];
+   Kleinschreibung, Teilstring-Match auf vendor+product+vulnerabilityName.
+   Fehlt die Datei, gibt es einfach kein Badge (kein Fehler). */
+const ASSETS = window.HEALTHEYE_ASSETS || [];
 
 // Gelesen-Markierungen & letzter Besuch (nur lokal im Browser, kein Server)
 const READ_KEY = 'healtheye:read:v1';
