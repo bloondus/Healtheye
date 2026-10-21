@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+  HEALTHEYE — IT-Security News Dashboard
+================================================================================
+  WAS IST DAS?
+    Ein komplett eigenständiges IT-Security-News-Dashboard in EINER HTML-Datei.
+    Keine Installation, kein Server, kein Build — einfach im Browser öffnen.
+
+  START
+    · Doppelklick auf die Datei, oder
+    · auf einem Intranet-Webserver ablegen, oder
+    · Kiosk/SOC-Bildschirm:  chrome --kiosk "file:///pfad/index.html"
+                             bzw. Firefox:  firefox --kiosk "file:///..."
+
+  WAS ES TUT
+    · Zieht Security-News automatisch aus RSS/Atom-Feeds (alle 10 Min.)
+    · Zeigt CISA KEV (aktiv ausgenützte Schwachstellen, inkl. Ransomware-Flag)
+    · Markiert Healthcare-/Spital-relevante Meldungen und Schweregrade
+    · Filter, Volltextsuche, News-Ticker, Live-Uhr (Europe/Zurich)
+    · Cache in localStorage → zeigt sofort Inhalt, auch wenn ein Proxy hängt
+
+  ANPASSEN (alles im <script>-Block unten, Sektion "KONFIGURATION")
+    · FEEDS        → Quellen ergänzen/entfernen (z. B. BACS-RSS, sobald verfügbar)
+    · HEALTH/CRIT  → Keyword-Listen (z. B. Hersteller: siemens, philips, draeger)
+    · REFRESH_MIN  → Aktualisierungsintervall in Minuten
+
+  HINWEIS CORS-PROXIES
+    Browser blockieren direkte RSS-Abrufe von Fremddomains. Das Board nutzt
+    öffentliche CORS-Proxies mit Fallback (siehe PROXIES). Es fliessen KEINE
+    internen Daten — nur öffentliche Feed-URLs. Falls eure Policy Dritt-Proxies
+    verbietet: eigenen Mini-Proxy ins Intranet stellen und in PROXIES vorne
+    eintragen, z. B.  u => 'https://proxy.intern/rss?u=' + encodeURIComponent(u)
+================================================================================
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Healtheye · IT-Security News</title>
+<style>
+:root{
+  --bg:#070b12; --panel:#0d1420; --panel2:#111a2b; --line:#1c2942;
+  --txt:#dbe7ff; --mut:#7c8db5; --acc:#22d3ee;
+  --crit:#f43f5e; --high:#fb923c; --med:#fbbf24; --info:#34d399;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--txt);
+  font:14px/1.5 system-ui,"Segoe UI",Roboto,sans-serif;
+  background-image:linear-gradient(rgba(34,211,238,.03) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(34,211,238,.03) 1px,transparent 1px);
+  background-size:32px 32px; padding-bottom:48px;
+}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#1c2942;border-radius:5px}
+header{
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  padding:16px 24px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(34,211,238,.06),transparent);
+}
+h1{font-family:ui-monospace,Consolas,monospace;font-size:26px;letter-spacing:2px}
+h1 .slash{color:var(--acc)}
+.sub{color:var(--mut);font-size:12px;letter-spacing:1px;text-transform:uppercase}
+.live{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--info);letter-spacing:1px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--info);animation:blink 1.6s infinite}
+@keyframes blink{50%{opacity:.25}}
+.clock{margin-left:auto;text-align:right;font-family:ui-monospace,monospace}
+.clock .time{font-size:24px;color:var(--acc)}
+.clock .date{font-size:11px;color:var(--mut)}
+.wrap{max-width:1600px;margin:0 auto;padding:0 24px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:18px 0}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+.stat b{display:block;font-size:26px;font-family:ui-monospace,monospace}
+.stat span{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:1px}
+.stat.crit b{color:var(--crit)} .stat.health b{color:var(--acc)} .stat.ok b{color:var(--info)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:18px}
+.panel h2{font-family:ui-monospace,monospace;font-size:13px;letter-spacing:2px;color:var(--acc);
+  padding:12px 16px;border-bottom:1px solid var(--line);text-transform:uppercase}
+.kev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;padding:14px}
+.kev{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--crit);
+  border-radius:8px;padding:10px 12px;font-size:12px}
+.kev a{color:var(--txt);text-decoration:none;font-weight:600;font-family:ui-monospace,monospace}
+.kev a:hover{color:var(--acc)}
+.kev .meta{color:var(--mut);margin-top:4px}
+.kev .rw{color:var(--crit);font-weight:700}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.chip{background:var(--panel);border:1px solid var(--line);color:var(--mut);border-radius:20px;
+  padding:6px 14px;cursor:pointer;font-size:12px;text-decoration:none;display:inline-block}
+.chip.on{border-color:var(--acc);color:var(--acc)}
+input,select{background:var(--panel);border:1px solid var(--line);color:var(--txt);
+  border-radius:8px;padding:7px 12px;font-size:13px}
+input{flex:1;min-width:180px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--info);
+  border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;transition:.15s}
+.card:hover{transform:translateY(-2px);border-color:var(--acc)}
+.card.kritisch{border-left-color:var(--crit)} .card.hoch{border-left-color:var(--high)}
+.card.mittel{border-left-color:var(--med)}
+.badges{display:flex;gap:6px;flex-wrap:wrap;font-size:10px;letter-spacing:1px}
+.badge{padding:2px 8px;border-radius:10px;border:1px solid var(--line);color:var(--mut);text-transform:uppercase}
+.badge.kritisch{color:var(--crit);border-color:var(--crit)}
+.badge.hoch{color:var(--high);border-color:var(--high)}
+.badge.mittel{color:var(--med);border-color:var(--med)}
+.badge.health{color:var(--acc);border-color:var(--acc)}
+.card h3{font-size:15px;line-height:1.35}
+.card h3 a{color:var(--txt);text-decoration:none}
+.card h3 a:hover{color:var(--acc)}
+.card p{color:var(--mut);font-size:12.5px}
+.card .foot{margin-top:auto;display:flex;justify-content:space-between;font-size:11px;color:var(--mut)}
+.card .src{color:var(--acc)}
+.feedstatus{padding:10px 16px;font-size:11px;color:var(--mut);display:flex;gap:14px;flex-wrap:wrap}
+.feedstatus .ok{color:var(--info)} .feedstatus .fail{color:var(--crit)}
+#ticker{position:fixed;left:0;right:0;bottom:0;background:#050810;border-top:1px solid var(--line);
+  overflow:hidden;height:34px;display:flex;align-items:center}
+#ticker .lbl{background:var(--crit);color:#fff;font-size:10px;font-weight:700;letter-spacing:1px;
+  padding:0 12px;height:100%;display:flex;align-items:center;z-index:2}
+#ticker .track{white-space:nowrap;display:inline-block;padding-left:100%;
+  animation:tick 90s linear infinite;font-size:12px;color:var(--mut)}
+@keyframes tick{to{transform:translateX(-100%)}}
+@media(prefers-reduced-motion:reduce){#ticker .track,.dot{animation:none}}
+.err{color:var(--mut);padding:14px 16px;font-size:12px}
+footer{color:var(--mut);font-size:11px;text-align:center;padding:18px 0 8px}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>HEALTH<span class="slash">//</span>EYE</h1>
+    <div class="sub">IT-Security News Dashboard</div>
+  </div>
+  <div class="live"><span class="dot"></span>LIVE</div>
+  <div class="clock">
+    <div class="time" id="clock">--:--:--</div>
+    <div class="date" id="date">–</div>
+    <div class="date" id="refreshInfo">–</div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="stats">
+    <div class="stat"><b id="stNews">–</b><span>Meldungen</span></div>
+    <div class="stat crit"><b id="stCrit">–</b><span>Kritisch / Hoch</span></div>
+    <div class="stat health"><b id="stHealth">–</b><span>🏥 Healthcare-relevant</span></div>
+    <div class="stat crit"><b id="stKev">–</b><span>Neue KEV-Einträge</span></div>
+    <div class="stat ok"><b id="stFeeds">–</b><span>Quellen online</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>⚠ CISA KEV — Aktiv ausgenützte Schwachstellen (neueste)</h2>
+    <div class="kev-grid" id="kev"><div class="err">Lade KEV-Daten …</div></div>
+  </div>
+
+  <div class="toolbar">
+    <button class="chip on" data-f="alle">Alle</button>
+    <button class="chip" data-f="health">🏥 Healthcare</button>
+    <button class="chip" data-f="kritisch">Kritisch &amp; Hoch</button>
+    <select id="srcSel"><option value="">Alle Quellen</option></select>
+    <input id="search" placeholder="Suchen (z. B. Ransomware, DICOM, CVE-2026-…)">
+    <button class="chip" id="reload">⟳ Aktualisieren</button>
+  </div>
+
+  <main class="grid" id="grid"></main>
+
+  <div class="panel" style="margin-top:18px">
+    <h2>Feed-Status</h2>
+    <div class="feedstatus" id="feedstatus">–</div>
+  </div>
+
+  <div class="panel">
+    <h2>Quick Links</h2>
+    <div class="feedstatus">
+      <a class="chip" href="https://www.bacs.admin.ch" target="_blank" rel="noopener">🇨🇭 BACS / NCSC</a>
+      <a class="chip" href="https://www.bsi.bund.de" target="_blank" rel="noopener">BSI</a>
+      <a class="chip" href="https://www.cisa.gov/news-events/cybersecurity-advisories" target="_blank" rel="noopener">CISA Advisories</a>
+      <a class="chip" href="https://urlhaus.abuse.ch" target="_blank" rel="noopener">abuse.ch URLhaus</a>
+      <a class="chip" href="https://nvd.nist.gov/vuln/search" target="_blank" rel="noopener">NVD</a>
+      <a class="chip" href="https://www.heise.de/security/" target="_blank" rel="noopener">heise Security</a>
+    </div>
+  </div>
+
+  <footer>Datenquellen: RSS/Atom-Feeds der jeweiligen Anbieter &amp; CISA KEV · Keine Gewähr · Inhalte © der jeweiligen Quelle</footer>
+</div>
+
+<div id="ticker"><span class="lbl">SECURITY NEWS</span><span class="track" id="track">Lade Feeds …</span></div>
+
+<script>
+/* ================= KONFIGURATION ================= */
+const REFRESH_MIN = 10;
+
+const FEEDS = [
+  { name:'heise Security',    url:'https://www.heise.de/security/rss/news-atom.xml',       lang:'de' },
+  { name:'The Hacker News',   url:'https://feeds.feedburner.com/TheHackersNews',           lang:'en' },
+  { name:'BleepingComputer',  url:'https://www.bleepingcomputer.com/feed/',                lang:'en' },
+  { name:'Krebs on Security', url:'https://krebsonsecurity.com/feed/',                     lang:'en' },
+  { name:'SecurityWeek',      url:'https://www.securityweek.com/feed/',                    lang:'en' },
+  { name:'CISA Advisories',   url:'https://www.cisa.gov/cybersecurity-advisories/all.xml', lang:'en' },
+];
+const KEV_URL = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
+
+// Healthcare-Relevanz — Hersteller/Systeme des eigenen Hauses ergänzen
+const HEALTH = ['hospital','healthcare','health care','patient','medical','clinic','radiolog','pharma',
+  'spital','krankenhaus','klinik','gesundheit','medizin','labor','dicom','hl7','fhir','epic','cerner'];
+// Schweregrad-Keywords
+const CRIT = ['zero-day','zero day','0-day','actively exploited','in the wild','ransomware','kev',
+  'remote code execution','rce','supply chain','backdoor','kritisch','notfall','emergency'];
+const MED  = ['vulnerability','schwachstelle','cve-','patch','update','malware','phishing','trojan',
+  'botnet','exploit','breach','datenleck','leak','ddos','angriff','attack','hack'];
+
+// CORS-Proxy-Kette (Reihenfolge = Fallback). Eigener Intranet-Proxy? Vorne eintragen.
+const PROXIES = [
+  u => u,
+  u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+];
+const CACHE_KEY = 'healtheye:v1';
+/* ================================================== */
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s||'').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let state = { filter:'alle', src:'', q:'' };
+let items = [], kev = [], feedStatus = [];
+
+/* ---------- Uhr ---------- */
+function tickClock(){
+  const t = new Intl.DateTimeFormat('de-CH',{timeZone:'Europe/Zurich',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const d = new Intl.DateTimeFormat('de-CH',{timeZone:'Europe/Zurich',weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+  $('#clock').textContent = t.format(new Date());
+  $('#date').textContent = d.format(new Date());
+}
+setInterval(tickClock, 1000); tickClock();
+
+/* ---------- Fetch mit Proxy-Fallback ---------- */
+async function fetchText(url){
+  let err;
+  for (const wrap of PROXIES){
+    try{
+      const r = await fetch(wrap(url), { signal: AbortSignal.timeout(12000) });
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const t = await r.text();
+      if(t && t.length > 80) return t;
+      throw new Error('leer');
+    }catch(e){ err = e; }
+  }
+  throw err;
+}
+
+/* ---------- RSS/Atom parsen ---------- */
+function parseFeed(xml, feed){
+  const doc = new DOMParser().parseFromString(xml,'text/xml');
+  const els = [...doc.querySelectorAll('item, entry')].slice(0,15);
+  return els.map(el => {
+    const byLocal = names => {
+      for(const n of el.getElementsByTagName('*')){
+        if(names.includes(n.localName)) return n.textContent.trim();
+      }
+      return '';
+    };
+    let link = el.querySelector('link')?.getAttribute('href')
+            || el.querySelector('link')?.textContent.trim() || '';
+    return classify({
+      title: byLocal(['title']),
+      link,
+      date: byLocal(['pubDate','published','updated','date']),
+      desc: byLocal(['description','summary','content','encoded']).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').slice(0,220),
+      source: feed.name
+    });
+  }).filter(i => i.title && i.link);
+}
+
+/* ---------- Klassifizierung ---------- */
+function classify(it){
+  const text = (it.title+' '+it.desc).toLowerCase();
+  const has = arr => arr.filter(k => text.includes(k)).length;
+  const crit = has(CRIT), med = has(MED);
+  it.health = has(HEALTH) > 0;
+  it.level = crit >= 2 ? 'kritisch' : crit === 1 ? 'hoch' : med > 0 ? 'mittel' : 'info';
+  return it;
+}
+
+/* ---------- Laden ---------- */
+async function loadAll(){
+  $('#refreshInfo').textContent = 'lade …';
+  const results = await Promise.allSettled(FEEDS.map(f => fetchText(f.url)));
+  items = []; feedStatus = [];
+  results.forEach((r,i) => {
+    if(r.status === 'fulfilled'){
+      try{
+        const parsed = parseFeed(r.value, FEEDS[i]);
+        items.push(...parsed);
+        feedStatus.push({name:FEEDS[i].name, ok:parsed.length>0, n:parsed.length});
+        return;
+      }catch(e){}
+    }
+    feedStatus.push({name:FEEDS[i].name, ok:false, n:0});
+  });
+  items.sort((a,b) => new Date(b.date) - new Date(a.date));
+
+  try{
+    const data = JSON.parse(await fetchText(KEV_URL));
+    kev = data.vulnerabilities.sort((a,b)=>b.dateAdded.localeCompare(a.dateAdded)).slice(0,6);
+  }catch(e){ kev = null; }
+
+  localStorage.setItem(CACHE_KEY, JSON.stringify({ts:Date.now(), items, kev, feedStatus}));
+  render();
+  $('#refreshInfo').textContent = 'Update: ' + new Date().toLocaleTimeString('de-CH');
+}
+
+/* ---------- Rendering ---------- */
+function ago(d){
+  const s = (Date.now() - new Date(d)) / 1000;
+  if(isNaN(s)) return '';
+  if(s < 3600) return 'vor ' + Math.max(1, s/60|0) + ' Min';
+  if(s < 86400) return 'vor ' + (s/3600|0) + ' Std';
+  return 'vor ' + (s/86400|0) + ' T';
+}
+
+function render(){
+  // Stats
+  $('#stNews').textContent = items.length;
+  $('#stCrit').textContent = items.filter(i=>['kritisch','hoch'].includes(i.level)).length;
+  $('#stHealth').textContent = items.filter(i=>i.health).length;
+  $('#stKev').textContent = kev ? kev.length : '–';
+  $('#stFeeds').textContent = feedStatus.filter(f=>f.ok).length + '/' + FEEDS.length;
+
+  // KEV
+  $('#kev').innerHTML = kev === null
+    ? '<div class="err">KEV nicht erreichbar → <a style="color:var(--acc)" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">Direktlink</a></div>'
+    : kev.map(v => `<div class="kev">
+        <a href="https://nvd.nist.gov/vuln/detail/${esc(v.cveID)}" target="_blank" rel="noopener">${esc(v.cveID)}</a>
+        ${v.knownRansomwareCampaignUse==='Known' ? '<span class="rw"> · 🔥 RANSOMWARE</span>' : ''}
+        <div>${esc(v.vulnerabilityName)}</div>
+        <div class="meta">${esc(v.vendorProject)} / ${esc(v.product)} · hinzugefügt: ${esc(v.dateAdded)} · Frist: ${esc(v.dueDate)}</div>
+      </div>`).join('');
+
+  // Quellen-Dropdown
+  const sel = $('#srcSel');
+  if(sel.options.length <= 1)
+    FEEDS.forEach(f => { const o=document.createElement('option'); o.value=f.name; o.textContent=f.name; sel.appendChild(o); });
+
+  // News-Grid
+  const q = state.q.toLowerCase();
+  const list = items.filter(i =>
+    (state.filter==='alle'
+      || (state.filter==='health' && i.health)
+      || (state.filter==='kritisch' && ['kritisch','hoch'].includes(i.level)))
+    && (!state.src || i.source===state.src)
+    && (!q || (i.title+' '+i.desc).toLowerCase().includes(q))
+  );
+
+  $('#grid').innerHTML = list.length ? list.map(i => `
+    <article class="card ${i.level}">
+      <div class="badges">
+        <span class="badge ${i.level}">${i.level}</span>
+        ${i.health ? '<span class="badge health">🏥 Healthcare</span>' : ''}
+        <span class="badge">${esc(i.source)}</span>
+      </div>
+      <h3><a href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.title)}</a></h3>
+      <p>${esc(i.desc)}</p>
+      <div class="foot"><span class="src">${esc(i.source)}</span><span>${ago(i.date)}</span></div>
+    </article>`).join('')
+    : '<div class="err">Keine Meldungen für diesen Filter.</div>';
+
+  // Feed-Status
+  $('#feedstatus').innerHTML = feedStatus.map(f =>
+    `<span class="${f.ok?'ok':'fail'}">${f.ok?'●':'○'} ${esc(f.name)} (${f.n})</span>`).join('');
+
+  // Ticker
+  $('#track').textContent = items.slice(0,15).map(i => '▸ ' + i.title).join('   ///   ');
+}
+
+/* ---------- Events ---------- */
+document.querySelectorAll('.chip[data-f]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.chip[data-f]').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); state.filter = b.dataset.f; render();
+});
+$('#srcSel').onchange = e => { state.src = e.target.value; render(); };
+$('#search').oninput = e => { state.q = e.target.value; render(); };
+$('#reload').onclick = loadAll;
+
+/* ---------- Start: Cache sofort, dann frisch laden ---------- */
+try{
+  const c = JSON.parse(localStorage.getItem(CACHE_KEY));
+  if(c && c.items){ items=c.items; kev=c.kev; feedStatus=c.feedStatus; render(); }
+}catch(e){}
+loadAll();
+setInterval(loadAll, REFRESH_MIN * 60 * 1000);
+</script>
+</body>
+</html>
