@@ -282,8 +282,29 @@ function classify(it){
 }
 
 /* ---------- Laden ---------- */
+// 1) data.json von gleicher Origin (von GitHub Action serverseitig erzeugt — kein CORS, zuverlässig)
+// 2) Fallback: Live-Fetch per Proxy-Kette (lokale Nutzung ohne data.json)
 async function loadAll(){
   $('#refreshInfo').textContent = 'lade …';
+  try{
+    const r = await fetch('data.json?t=' + Date.now());
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const d = await r.json();
+    if(d.items && d.items.length){
+      items = d.items; kev = d.kev; feedStatus = d.feedStatus;
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ts:d.ts, items, kev, feedStatus}));
+      render();
+      $('#refreshInfo').textContent = 'Stand: ' + new Date(d.ts).toLocaleTimeString('de-CH')
+        + (d.ts < Date.now() - 3600000 ? ' (Snapshot)' : '');
+      return;
+    }
+    throw new Error('leer');
+  }catch(e){
+    await loadLive();
+  }
+}
+
+async function loadLive(){
   const results = await Promise.allSettled(FEEDS.map(f => fetchText(f.url)));
   items = []; feedStatus = [];
   results.forEach((r,i) => {

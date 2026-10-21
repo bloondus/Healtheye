@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # Alle 30 Minuten frische Daten holen und neu deployen
+    - cron: '*/30 * * * *'
 
 permissions:
   pages: write
@@ -22,6 +25,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Feeds serverseitig holen (kein CORS)
+        run: node fetch-feeds.mjs
       - name: Setup Pages
         uses: actions/configure-pages@v4
       - name: Upload artifact
