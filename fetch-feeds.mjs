@@ -12,14 +12,28 @@ const FEEDS = [
   { name:'Krebs on Security', url:'https://krebsonsecurity.com/feed/' },
   { name:'SecurityWeek',      url:'https://www.securityweek.com/feed/' },
   { name:'CISA Advisories',   url:'https://www.cisa.gov/cybersecurity-advisories/all.xml' },
+  { name:'HIPAA Journal',     url:'https://www.hipaajournal.com/feed/' },
+  { name:'HealthcareInfoSec', url:'https://www.healthcareinfosecurity.com/rss-feeds' },
 ];
 const KEV_URL = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 Healtheye/1.0';
 
 // Klassifizierung (gleiche Logik wie im Frontend)
-const HEALTH = ['hospital','healthcare','health care','patient','medical','clinic','radiolog','pharma',
-  'spital','krankenhaus','klinik','gesundheit','medizin','labor','dicom','hl7','fhir','epic','cerner'];
+// Healthcare-Relevanz — Hersteller/Systeme des eigenen Hauses ergänzen
+const HEALTH = ['hospital','healthcare','health care','patient','patients','medical','clinic','clinics',
+  'radiolog','pharma','pharmacy','spital','krankenhaus','klinik','gesundheit','medizin','labor','laboratory',
+  // Spital-IT-Systeme & Standards
+  'dicom','hl7','fhir','pacs','ris','kis','lis','emr','ehr','epic','cerner','meditech','dedalus','agfa',
+  // Medizingeräte-Hersteller & Zulieferer
+  'siemens healthineers','philips','ge healthcare','dräger','draeger','medtronic','stryker','becton dickinson',
+  'fresenius','baxter','b. braun','getinge','olympus','irhythm','conduent',
+  // Angreifer & Angriffe auf Gesundheitswesen
+  'ransomware','safepay','lockbit','blackcat','alphv','cl0p','clop','conti','ryuk','hive','chaos',
+  'data breach','breach','datenleck','vishing','double extortion',
+  // Regulierung & Behörden (Gesundheit)
+  'hipaa','hhs','ocr','fda','mdr','medical device','medizingerät','nis2','nis-2','gdpr','dsgvo',
+  'critical infrastructure','kritis','health sector','gesundheitssektor','protected health information','phi','ehealth','telehealth','telemedizin'];
 const CRIT = ['zero-day','zero day','0-day','actively exploited','in the wild','ransomware','kev',
   'remote code execution','rce','supply chain','backdoor','kritisch','notfall','emergency'];
 const MED  = ['vulnerability','schwachstelle','cve-','patch','update','malware','phishing','trojan',
