@@ -17,6 +17,22 @@ const KEV_URL = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 Healtheye/1.0';
 
+// Klassifizierung (gleiche Logik wie im Frontend)
+const HEALTH = ['hospital','healthcare','health care','patient','medical','clinic','radiolog','pharma',
+  'spital','krankenhaus','klinik','gesundheit','medizin','labor','dicom','hl7','fhir','epic','cerner'];
+const CRIT = ['zero-day','zero day','0-day','actively exploited','in the wild','ransomware','kev',
+  'remote code execution','rce','supply chain','backdoor','kritisch','notfall','emergency'];
+const MED  = ['vulnerability','schwachstelle','cve-','patch','update','malware','phishing','trojan',
+  'botnet','exploit','breach','datenleck','leak','ddos','angriff','attack','hack'];
+function classify(it){
+  const text = (it.title+' '+it.desc).toLowerCase();
+  const has = arr => arr.filter(k => text.includes(k)).length;
+  const crit = has(CRIT), med = has(MED);
+  it.health = has(HEALTH) > 0;
+  it.level = crit >= 2 ? 'kritisch' : crit === 1 ? 'hoch' : med > 0 ? 'mittel' : 'info';
+  return it;
+}
+
 async function get(url, asJson){
   const r = await fetch(url, { headers:{ 'User-Agent':UA, 'Accept':'*/*' }, signal: AbortSignal.timeout(25000) });
   if(!r.ok) throw new Error('HTTP '+r.status);
@@ -39,12 +55,12 @@ function parseFeed(xml, feed){
     if(lm) link = lm[1]; else link = tag(b,'link');
     const desc = tag(b,'description','summary','content','content:encoded')
       .replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').slice(0,220);
-    return {
+    return classify({
       title: tag(b,'title'),
       link: link.trim(),
       date: tag(b,'pubDate','published','updated','dc:date'),
       desc, source: feed.name
-    };
+    });
   }).filter(i => i.title && i.link);
 }
 
