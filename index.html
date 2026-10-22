@@ -300,7 +300,7 @@ function threatLevel(){
   });
   // 2) kritische Healthcare-News der letzten 24h
   const critHealth24 = items.filter(i => i.health && ['kritisch','hoch'].includes(i.level)
-    && (now - new Date(i.date).getTime()) < day).length;
+    && i.date && (now - new Date(i.date).getTime()) < day).length;
   // 3) Feed-Health
   const feedsDown = feedStatus.filter(f => !f.ok).length;
   const total = FEEDS.length;
@@ -420,7 +420,7 @@ async function loadLive(){
     }
     feedStatus.push({name:FEEDS[i].name, ok:false, n:0});
   });
-  items.sort((a,b) => new Date(b.date) - new Date(a.date));
+  items.sort((a,b) => new Date(b.date||0) - new Date(a.date||0));
 
   try{
     const data = JSON.parse(await fetchText(KEV_URL));
@@ -434,8 +434,9 @@ async function loadLive(){
 
 /* ---------- Rendering ---------- */
 function ago(d){
+  if(!d) return 'ohne Datum';
   const s = (Date.now() - new Date(d)) / 1000;
-  if(isNaN(s)) return '';
+  if(isNaN(s)) return 'ohne Datum';
   if(s < 3600) return 'vor ' + Math.max(1, s/60|0) + ' Min';
   if(s < 86400) return 'vor ' + (s/3600|0) + ' Std';
   return 'vor ' + (s/86400|0) + ' T';
@@ -486,10 +487,10 @@ function render(){
     if(readSet.has(i.link)) r += 10;                              // gelesene nach hinten
     return r;
   };
-  list.sort((a,b) => rank(a) - rank(b) || new Date(b.date) - new Date(a.date));
+  list.sort((a,b) => rank(a) - rank(b) || new Date(b.date||0) - new Date(a.date||0));
 
   $('#grid').innerHTML = list.length ? list.map(i => {
-    const isNew = lastVisit && new Date(i.date).getTime() > lastVisit;
+    const isNew = lastVisit && i.date && new Date(i.date).getTime() > lastVisit;
     const gelesen = readSet.has(i.link);
     return `
     <article class="card ${i.level} ${gelesen?'gelesen':''}">
@@ -523,7 +524,7 @@ function render(){
   $('#threatLvl').textContent = '● ' + t.txt;
   $('#threatWhy').textContent = t.why;
   if(lastVisit){
-    const neu = items.filter(i => new Date(i.date).getTime() > lastVisit);
+    const neu = items.filter(i => i.date && new Date(i.date).getTime() > lastVisit);
     const neuKrit = neu.filter(i => ['kritisch','hoch'].includes(i.level)).length;
     const neuHealth = neu.filter(i => i.health).length;
     $('#newdelta').textContent = neu.length

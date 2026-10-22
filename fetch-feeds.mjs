@@ -61,6 +61,12 @@ function tag(block, ...names){
   }
   return '';
 }
+// Datum robust parsen; ungültig/leer → null (wird im Frontend ans Ende sortiert,
+// statt mit falschem „jetzt" die frischen Meldungen zu verdrängen)
+function parseDate(s){
+  const t = new Date(s).getTime();
+  return isNaN(t) ? null : new Date(t).toISOString();
+}
 function parseFeed(xml, feed){
   const blocks = xml.match(/<item[\s>][\s\S]*?<\/item>/gi) || xml.match(/<entry[\s>][\s\S]*?<\/entry>/gi) || [];
   return blocks.slice(0,15).map(b => {
@@ -72,7 +78,7 @@ function parseFeed(xml, feed){
     return classify({
       title: tag(b,'title'),
       link: link.trim(),
-      date: tag(b,'pubDate','published','updated','dc:date'),
+      date: parseDate(tag(b,'pubDate','published','updated','dc:date')),
       desc, source: feed.name
     });
   }).filter(i => i.title && i.link);
@@ -90,7 +96,7 @@ function parseFeed(xml, feed){
     feedStatus.push({ name: FEEDS[i].name, ok: parsed.length>0, n: parsed.length });
     console.log(`${parsed.length>0?'OK  ':'FAIL'} ${FEEDS[i].name}: ${parsed.length} items`);
   });
-  items.sort((a,b) => new Date(b.date) - new Date(a.date));
+  items.sort((a,b) => new Date(b.date||0) - new Date(a.date||0));
 
   let kev = null;
   try{
@@ -99,6 +105,11 @@ function parseFeed(xml, feed){
     console.log('OK   KEV: ' + kev.length + ' entries');
   }catch(e){ console.log('FAIL KEV: ' + e.message); }
 
-  fs.writeFileSync('data.json', JSON.stringify({ ts: Date.now(), items, kev, feedStatus }));
-  console.log(`=> data.json geschrieben: ${items.length} Meldungen, ${feedStatus.filter(f=>f.ok).length}/${FEEDS.length} Quellen, KEV ${kev?'ok':'fehlt'}`);
+  // Nur frische Meldungen: alles älter als 48h fällt raus; Items ohne Datum bleiben drin (werden hinten sortiert)
+  const cutoff = Date.now() - 48*3600000;
+  const frisch = items.filter(i => !i.date || new Date(i.date).getTime() >= cutoff);
+  console.log(`Frische-Filter: ${items.length} → ${frisch.length} Meldungen (>48h entfernt: ${items.length-frisch.length}, ohne Datum: ${frisch.filter(i=>!i.date).length})`);
+
+  fs.writeFileSync('data.json', JSON.stringify({ ts: Date.now(), items: frisch, kev, feedStatus }));
+  console.log(`=> data.json geschrieben: ${frisch.length} Meldungen, ${feedStatus.filter(f=>f.ok).length}/${FEEDS.length} Quellen, KEV ${kev?'ok':'fehlt'}`);
 })();
