@@ -145,6 +145,16 @@ footer{color:var(--mut);font-size:11px;text-align:center;padding:18px 0 8px}
 .card .gelesenBtn{cursor:pointer;font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
 .card .gelesenBtn:hover{color:var(--acc);border-color:var(--acc)}
 .badge.neu{color:#fff;background:var(--acc);border-color:var(--acc)}
+.settings{display:none;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.settings.open{display:block}
+.settings h2{font-size:13px;margin-bottom:8px;color:var(--acc)}
+.settings .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px;font-size:12.5px;color:var(--mut)}
+.settings input[type=text],.settings select{background:var(--bg,#0b0f14);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:6px 10px;font:inherit}
+.settings input[type=text]{flex:1;min-width:220px}
+.kw{display:inline-flex;gap:6px;align-items:center;background:var(--bg,#0b0f14);border:1px solid var(--acc);color:var(--acc);border-radius:16px;padding:2px 10px;font-size:12px}
+.kw b{cursor:pointer;color:var(--mut)} .kw b:hover{color:var(--crit)}
+.badge.hit{border-color:var(--acc);color:var(--acc)}
+.hidinfo{font-size:12px;color:var(--mut);margin:0 0 10px}
 </style>
 </head>
 <body>
@@ -191,7 +201,36 @@ footer{color:var(--mut);font-size:11px;text-align:center;padding:18px 0 8px}
     <select id="srcSel"><option value="">Alle Quellen</option></select>
     <input id="search" placeholder="Suchen (z. B. Ransomware, DICOM, CVE-2026-…)">
     <button class="chip" id="reload">⟳ Aktualisieren</button>
+    <button class="chip" id="cfgBtn">⚙ Einstellungen</button>
   </div>
+
+  <div class="settings" id="settings">
+    <h2>⚙ Meine Relevanz-Filter (nur lokal in diesem Browser gespeichert)</h2>
+    <div class="row">
+      <input type="text" id="kwInput" placeholder="Stichwort eingeben (Software, Hersteller, Sprache, z. B. Fortinet, Citrix, Java, Python, VMware) + Enter">
+      <button class="chip" id="kwAdd">+ Hinzufügen</button>
+    </div>
+    <div class="row" id="kwList"></div>
+    <div class="row">
+      <label>Anzeige
+        <select id="cfgMode">
+          <option value="relevant">Nur Relevantes</option>
+          <option value="all">Alles anzeigen</option>
+        </select>
+      </label>
+      <label>Mindest-Schweregrad
+        <select id="cfgMin">
+          <option value="info">Info &amp; höher</option>
+          <option value="mittel">Mittel &amp; höher</option>
+          <option value="hoch">Hoch &amp; kritisch</option>
+          <option value="kritisch">Nur kritisch</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="cfgCrit"> Auch allgemein kritische Meldungen (Zero-Day, aktiv ausgenutzt) ohne Treffer zeigen</label>
+    </div>
+    <div class="row"><span>Ohne Stichwörter gilt: Healthcare- oder Hoch/Kritisch-Meldungen. Die Ampel und Statistik zählen nur, was hier als relevant gilt.</span></div>
+  </div>
+  <div class="hidinfo" id="hidInfo"></div>
 
   <main class="grid" id="grid"></main>
 
@@ -288,19 +327,65 @@ const safeUrl = u => { const s = String(u||'').trim(); return /^https?:\/\//i.te
 let state = { filter:'alle', src:'', q:'' };
 let items = [], kev = [], feedStatus = [];
 
+/* ---------- Benutzer-Einstellungen (localStorage) ---------- */
+const CFG_KEY = 'healtheye:cfg:v1';
+const LEVELS = ['info','mittel','hoch','kritisch'];
+const cfgDefault = { keywords:[], mode:'relevant', minLevel:'mittel', includeCrit:true };
+function loadCfg(){
+  try{
+    const c = JSON.parse(localStorage.getItem(CFG_KEY));
+    if(c && typeof c === 'object'){
+      return {
+        keywords: Array.isArray(c.keywords) ? c.keywords.map(String).slice(0,100) : [],
+        mode: c.mode === 'all' ? 'all' : 'relevant',
+        minLevel: LEVELS.includes(c.minLevel) ? c.minLevel : cfgDefault.minLevel,
+        includeCrit: c.includeCrit !== false
+      };
+    }
+  }catch(e){}
+  return {...cfgDefault, keywords:[]};
+}
+const cfg = loadCfg();
+function saveCfg(){ localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }
+
+// Ganzwort-Match (Unicode), damit z. B. „java" nicht „javascript" trifft und „ris" nicht „crisis"
+const kwRe = new Map();
+function kwMatch(text, kw){
+  let re = kwRe.get(kw);
+  if(!re){
+    re = new RegExp('(?<![\\p{L}\\p{N}])' + kw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '(?![\\p{L}\\p{N}])', 'iu');
+    kwRe.set(kw, re);
+  }
+  return re.test(text);
+}
+const userKw = () => [...new Set([...cfg.keywords, ...ASSETS])];
+const lvlIdx = l => LEVELS.indexOf(l);
+const isHigh = i => lvlIdx(i.level) >= 2;
+function itemHits(i){
+  const t = i.title+' '+i.desc;
+  return cfg.keywords.filter(k => kwMatch(t, k));
+}
+function isRelevant(i){
+  if(lvlIdx(i.level) < lvlIdx(cfg.minLevel)) return false;
+  if(cfg.mode === 'all') return true;
+  if(!cfg.keywords.length) return i.health || isHigh(i);
+  return itemHits(i).length > 0 || (cfg.includeCrit && i.level === 'kritisch');
+}
+
 /* ---------- Bedrohungslevel (Ampel) ---------- */
 function threatLevel(){
   const now = Date.now();
   const day = 86400000;
   // 1) überfällige KEVs (dueDate < heute) und in <48h fällige
   let overdue = 0, soon = 0;
-  (kev||[]).forEach(v => {
+  const focus = cfg.mode === 'relevant' && userKw().length > 0;
+  (kev||[]).filter(v => !focus || kevRelevant(v)).forEach(v => {
     const d = new Date(v.dueDate).getTime();
     if(!isNaN(d)){ if(d < now) overdue++; else if(d - now < 2*day) soon++; }
   });
   // 2) kritische Healthcare-News der letzten 24h
-  const critHealth24 = items.filter(i => i.health && ['kritisch','hoch'].includes(i.level)
-    && i.date && (now - new Date(i.date).getTime()) < day).length;
+  const critHealth24 = items.filter(i => isRelevant(i) && (i.health || itemHits(i).length)
+    && ['kritisch','hoch'].includes(i.level) && i.date && (now - new Date(i.date).getTime()) < day).length;
   // 3) Feed-Health
   const feedsDown = feedStatus.filter(f => !f.ok).length;
   const total = FEEDS.length;
@@ -315,7 +400,7 @@ function threatLevel(){
 /* ---------- KEV: Relevanz & Frist ---------- */
 function kevRelevant(v){
   const t = (v.vendorProject+' '+v.product+' '+v.vulnerabilityName).toLowerCase();
-  return ASSETS.some(a => t.includes(a));
+  return ASSETS.some(a => t.includes(a)) || cfg.keywords.some(k => kwMatch(t, k));
 }
 function kevDueInfo(v){
   const now = Date.now(), d = new Date(v.dueDate).getTime();
@@ -444,20 +529,24 @@ function ago(d){
 
 function render(){
   // Stats
-  $('#stNews').textContent = items.length;
-  $('#stCrit').textContent = items.filter(i=>['kritisch','hoch'].includes(i.level)).length;
-  $('#stHealth').textContent = items.filter(i=>i.health).length;
-  $('#stKev').textContent = kev ? kev.length : '–';
+  const rel = items.filter(isRelevant);
+  $('#stNews').textContent = rel.length;
+  $('#stCrit').textContent = rel.filter(i=>['kritisch','hoch'].includes(i.level)).length;
+  $('#stHealth').textContent = rel.filter(i=>i.health).length;
+  const focusKev = cfg.mode === 'relevant' && userKw().length > 0;
+  const kevShown = kev ? (focusKev ? kev.filter(kevRelevant) : kev) : kev;
+  $('#stKev').textContent = kevShown ? kevShown.length : '–';
   $('#stFeeds').textContent = feedStatus.filter(f=>f.ok).length + '/' + FEEDS.length;
 
   // KEV — sortiert nach Frist (dringlichste zuerst), mit Relevanz-Badge
   $('#kev').innerHTML = kev === null
     ? '<div class="err">KEV nicht erreichbar → <a style="color:var(--acc)" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">Direktlink</a></div>'
-    : [...kev].sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate)).map(v => {
-      const rel = kevRelevant(v), due = kevDueInfo(v);
+    : !kevShown.length ? '<div class="err">Keine KEV-Einträge zu deinen Stichwörtern.</div>'
+    : [...kevShown].sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate)).map(v => {
+      const relv = kevRelevant(v), due = kevDueInfo(v);
       return `<div class="kev">
         <a href="${safeUrl('https://nvd.nist.gov/vuln/detail/'+v.cveID)}" target="_blank" rel="noopener">${esc(v.cveID)}</a>
-        ${rel ? '<span class="relevant">🎯 BETRIFFT UNS</span>' : ''}
+        ${relv ? '<span class="relevant">🎯 BETRIFFT UNS</span>' : ''}
         ${v.knownRansomwareCampaignUse==='Known' ? '<span class="rw"> · 🔥 RANSOMWARE</span>' : ''}
         <div>${esc(v.vulnerabilityName)}</div>
         <div class="meta">${esc(v.vendorProject)} / ${esc(v.product)} · hinzugefügt: ${esc(v.dateAdded)} · <span class="${due.cls}">${esc(due.txt)}</span></div>
@@ -472,6 +561,7 @@ function render(){
   // News-Grid — Smart-Sort: ungelesene Healthcare+kritisch zuerst, dann Datum
   const q = state.q.toLowerCase();
   const list = items.filter(i =>
+    isRelevant(i) &&
     (state.filter==='alle'
       || (state.filter==='health' && i.health)
       || (state.filter==='kritisch' && ['kritisch','hoch'].includes(i.level)))
@@ -487,6 +577,9 @@ function render(){
     if(readSet.has(i.link)) r += 10;                              // gelesene nach hinten
     return r;
   };
+  const hidden = items.length - items.filter(isRelevant).length;
+  $('#hidInfo').textContent = cfg.mode === 'relevant' && hidden > 0
+    ? `${hidden} von ${items.length} Meldungen ausgeblendet (nicht relevant für deine Einstellungen)` : '';
   list.sort((a,b) => rank(a) - rank(b) || new Date(b.date||0) - new Date(a.date||0));
 
   $('#grid').innerHTML = list.length ? list.map(i => {
@@ -497,6 +590,7 @@ function render(){
       <div class="badges">
         <span class="badge ${i.level}">${i.level}</span>
         ${i.health ? '<span class="badge health">🏥 Healthcare</span>' : ''}
+        ${itemHits(i).slice(0,3).map(k => `<span class="badge hit">🎯 ${esc(k)}</span>`).join('')}
         ${isNew ? '<span class="badge neu">NEU</span>' : ''}
         <span class="badge">${esc(i.source)}</span>
       </div>
@@ -537,7 +631,7 @@ function render(){
     `<span class="${f.ok?'ok':'fail'}">${f.ok?'●':'○'} ${esc(f.name)} (${f.n})</span>`).join('');
 
   // Ticker
-  $('#track').textContent = items.slice(0,15).map(i => '▸ ' + i.title).join('   ///   ');
+  $('#track').textContent = items.filter(isRelevant).slice(0,15).map(i => '▸ ' + i.title).join('   ///   ');
 }
 
 /* ---------- Events ---------- */
@@ -548,6 +642,34 @@ document.querySelectorAll('.chip[data-f]').forEach(b => b.onclick = () => {
 $('#srcSel').onchange = e => { state.src = e.target.value; render(); };
 $('#search').oninput = e => { state.q = e.target.value; render(); };
 $('#reload').onclick = loadAll;
+
+/* ---------- Einstellungen-UI ---------- */
+function renderCfg(){
+  $('#kwList').innerHTML = cfg.keywords.length
+    ? cfg.keywords.map((k,n) => `<span class="kw">${esc(k)} <b data-n="${n}" title="Entfernen">×</b></span>`).join('')
+    : '<span>Noch keine Stichwörter.</span>';
+  document.querySelectorAll('#kwList b').forEach(b => b.onclick = () => {
+    cfg.keywords.splice(+b.dataset.n, 1); saveCfg(); renderCfg(); render();
+  });
+  $('#cfgMode').value = cfg.mode;
+  $('#cfgMin').value = cfg.minLevel;
+  $('#cfgCrit').checked = cfg.includeCrit;
+  $('#cfgBtn').classList.toggle('on', $('#settings').classList.contains('open'));
+}
+function addKw(){
+  const inp = $('#kwInput');
+  inp.value.split(',').map(x => x.trim().toLowerCase()).filter(Boolean).forEach(k => {
+    if(k.length <= 60 && !cfg.keywords.includes(k) && cfg.keywords.length < 100) cfg.keywords.push(k);
+  });
+  inp.value = ''; saveCfg(); renderCfg(); render();
+}
+$('#cfgBtn').onclick = () => { $('#settings').classList.toggle('open'); renderCfg(); };
+$('#kwAdd').onclick = addKw;
+$('#kwInput').onkeydown = e => { if(e.key === 'Enter') addKw(); };
+$('#cfgMode').onchange = e => { cfg.mode = e.target.value; saveCfg(); render(); };
+$('#cfgMin').onchange = e => { cfg.minLevel = e.target.value; saveCfg(); render(); };
+$('#cfgCrit').onchange = e => { cfg.includeCrit = e.target.checked; saveCfg(); render(); };
+renderCfg();
 
 /* ---------- Start: Cache sofort, dann frisch laden ---------- */
 try{
